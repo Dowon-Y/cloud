@@ -33,7 +33,7 @@ class SimpleSwitch13(app_manager.RyuApp):
             '10:00:00:00:00:04' : 4
         }
         self.tcp_blacklist = { '10:00:00:00:00:02', '10:00:00:00:00:04' }
-        self.udp_blacklist = { '10:00:00:00:00:01', '10:00:00:00:00:04' }
+        self.udp_blacklist = [ '10:00:00:00:00:01', '10:00:00:00:00:04' ]
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
@@ -220,7 +220,7 @@ class SimpleSwitch13(app_manager.RyuApp):
                                 tcp_dst=pkt_tcp.dst_port)
         actions = [parser.OFPActionOutput(port=out_port)]
         self.add_flow(datapath, 1, match, actions)
-        self.send_packet(datapath, out_port, pkt)
+        self._send_packet(datapath, out_port, pkt)
 
     def _handle_udp(self, dpid, datapath, pkt_ethernet, pkt_udp, pkt):
         # counter-clockwise
@@ -233,9 +233,7 @@ class SimpleSwitch13(app_manager.RyuApp):
             # blocking rule should have higher priority
             match = parser.OFPMatch(eth_type=0x0800,
                                     ip_proto=17,
-                                    eth_src=src,
-                                    eth_dst=dst,
-                                    tcp_dst=pkt_udp.dst_port)
+                                    eth_src=src)
             actions = []
             self.add_flow(datapath, 100, match, actions)
             return
@@ -248,7 +246,7 @@ class SimpleSwitch13(app_manager.RyuApp):
                                 tcp_dst=pkt_udp.dst_port)
         actions = [parser.OFPActionOutput(port=out_port)]
         self.add_flow(datapath, 1, match, actions)
-        self.send_packet(datapath, out_port, pkt)
+        self._send_packet(datapath, out_port, pkt)
 
     def _send_packet(self, datapath, port, pkt):
         ofproto = datapath.ofproto

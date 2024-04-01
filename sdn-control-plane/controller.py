@@ -120,7 +120,7 @@ class SimpleSwitch13(app_manager.RyuApp):
 
             if pkt_icmp:
                 # handle icmp
-                self._handle_icmp(datapath, in_port, pkt_ethernet, pkt_icmp, pkt)
+                self._handle_icmp(datapath, pkt_ethernet, pkt_icmp, pkt)
                 return
             elif pkt_udp:
                 # handle udp
@@ -149,7 +149,7 @@ class SimpleSwitch13(app_manager.RyuApp):
                                  dst_ip=pkt_arp.src_ip))
         self._send_packet(datapath, port, pkt)
 
-    def _handle_icmp(self, datapath, port, pkt_ethernet, pkt_icmp, pkt):
+    def _handle_icmp(self, datapath, pkt_ethernet, pkt_icmp, pkt):
         # clockwise if two shortest path
         # port 2 is clockwise, port 3 is counter-clockwise
         if pkt_icmp.type != icmp.ICMP_ECHO_REQUEST:
@@ -163,7 +163,7 @@ class SimpleSwitch13(app_manager.RyuApp):
                                 eth_dst=dst)
         actions = [parser.OFPActionOutput(port=out_port)]
         self.add_flow(datapath, 1, match, actions)
-        self._send_packet(datapath, port, pkt)
+        self._send_packet(datapath, out_port, pkt)
 
     def _handle_tcp(self, datapath, port, pkt_ethernet, pkt_ipv4, pkt_tcp, pkt):
         # clockwise if two shortest path
@@ -206,7 +206,6 @@ class SimpleSwitch13(app_manager.RyuApp):
         actions = [parser.OFPActionOutput(port=out_port)]
         self.add_flow(datapath, 1, match, actions)
         self.send_packet(datapath, out_port, pkt)
-
 
     def _send_packet(self, datapath, port, pkt):
         ofproto = datapath.ofproto

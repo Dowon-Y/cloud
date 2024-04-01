@@ -19,11 +19,12 @@ class SimpleSwitch13(app_manager.RyuApp):
             '10.0.0.3': '10:00:00:00:00:03',
             '10.0.0.4': '10:00:00:00:00:04'
         }
-        self.one_hop_neigbors = {
-            '10:00:00:00:00:01':['10:00:00:00:00:02','10:00:00:00:00:04'],
-            '10:00:00:00:00:02':['10:00:00:00:00:03','10:00:00:00:00:01'],
-            '10:00:00:00:00:03':['10:00:00:00:00:04','10:00:00:00:00:02'],
-            '10:00:00:00:00:04':['10:00:00:00:00:01','10:00:00:00:00:03']
+        self.links = {
+            # links[src][dst] -> port
+            '00:00:00:00:00:01' : { '10:00:00:00:00:02' : 2, '10:00:00:00:00:04' : 3},
+            '00:00:00:00:00:02' : { '10:00:00:00:00:03' : 2, '10:00:00:00:00:01' : 3},
+            '00:00:00:00:00:03' : { '10:00:00:00:00:04' : 2, '10:00:00:00:00:02' : 3},
+            '00:00:00:00:00:04' : { '10:00:00:00:00:01' : 2, '10:00:00:00:00:03' : 3},
         }
         self.tcp_blacklist = ['10:00:00:00:00:02','10:00:00:00:00:04']
         self.udp_blacklist = ['10:00:00:00:00:01','10:00:00:00:00:04']
@@ -142,7 +143,7 @@ class SimpleSwitch13(app_manager.RyuApp):
             else:
                 if(dst in self.one_hop_neighbors[src]):
                     #Handle one hop
-                    out_port = (self.one_hop_neighbors[src].index(dst))+2
+                    out_port = self.links[src].get(dst, 2)
                 else:
                     #Handle two hop
                     pass
@@ -169,7 +170,7 @@ class SimpleSwitch13(app_manager.RyuApp):
             return
         src = pkt_ethernet.src
         dst = pkt_ethernet.dst
-        out_port = (self.one_hop_neighbors[src].index(dst))+2
+        out_port = self.links[src].get(dst, 2)
         parser = datapath.ofproto_parser
         match = parser.OFPMatch(eth_type=0x0800,
                                 ip_proto=1,

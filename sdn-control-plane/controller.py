@@ -124,12 +124,8 @@ class SimpleSwitch13(app_manager.RyuApp):
                 return
             elif pkt_udp:
                 # handle udp
-                # self._handle_udp(datapath, in_port, )
-                # if(src in self.udp_blacklist):
-                #   match = parser.OFPMatch(eth_src=src, ip_proto=17)
-                #   actions = []
-                #   self.add_flow(datapath, 2, match, actions)
-                  return
+                self._handle_udp(datapath, pkt_ethernet, pkt_udp, pkt)
+                return
             elif pkt_tcp:
                 # handle tcp
                 self._handle_tcp(datapath, in_port, pkt_ethernet, pkt_ipv4, pkt_tcp, pkt)
@@ -203,6 +199,34 @@ class SimpleSwitch13(app_manager.RyuApp):
                                 eth_src=src,
                                 eth_dst=dst,
                                 tcp_dst=pkt_tcp.dst_port)
+        actions = [parser.OFPActionOutput(port=out_port)]
+        self.add_flow(datapath, 1, match, actions)
+        self.send_packet(datapath, out_port, pkt)
+
+    def _handle_udp(self, datapath, pkt_ethernet, pkt_udp, pkt):
+        # counter-clockwise
+        # port 2 is clockwise, port 3 is counter-clockwise
+        src = pkt_ethernet.src
+        dst = pkt_ethernet.dst
+        parser = datapath.ofproto_parser
+        # blocking rule - UDP from H1 or H4
+        if src in self.udp_blacklist:
+            # blocking rule should have higher priority
+            match = parser.OFPMatch(eth_type=0x0800,
+                                    ip_proto=17,
+                                    eth_src=src,
+                                    eth_dst=dst,
+                                    tcp_dst=pkt_udp.dst_port)
+            actions = []
+            self.add_flow(datapath, 100, match, actions)
+            return
+        # normal case
+        out_port = self.links[src].get(dst, 3)
+        match = parser.OFPMatch(eth_type=0x0800,
+                                ip_proto=17,
+                                eth_src=src,
+                                eth_dst=dst,
+                                tcp_dst=pkt_udp.dst_port)
         actions = [parser.OFPActionOutput(port=out_port)]
         self.add_flow(datapath, 1, match, actions)
         self.send_packet(datapath, out_port, pkt)

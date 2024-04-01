@@ -26,6 +26,12 @@ class SimpleSwitch13(app_manager.RyuApp):
             '10:00:00:00:00:03' : { '10:00:00:00:00:04' : 2, '10:00:00:00:00:02' : 3 },
             '10:00:00:00:00:04' : { '10:00:00:00:00:01' : 2, '10:00:00:00:00:03' : 3 }
         }
+        self.to_host = {
+            '10:00:00:00:00:01' : 1,
+            '10:00:00:00:00:02' : 2,
+            '10:00:00:00:00:03' : 3,
+            '10:00:00:00:00:04' : 4
+        }
         self.tcp_blacklist = { '10:00:00:00:00:02', '10:00:00:00:00:04' }
         self.udp_blacklist = { '10:00:00:00:00:01', '10:00:00:00:00:04' }
 
@@ -42,6 +48,13 @@ class SimpleSwitch13(app_manager.RyuApp):
         # 128, OVS will send Packet-In with invalid buffer_id and
         # truncated packet data. In that case, we cannot output packets
         # correctly.  The bug has been fixed in OVS v2.1.0.
+
+        # Drop all IPv6 traffic
+        match = parser.OFPMatch(eth_type=0x86DD)
+        actions = []
+        self.add_flow(datapath, 1, match, actions)
+
+        # regular traffic
         match = parser.OFPMatch()
         actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
                                           ofproto.OFPCML_NO_BUFFER)]
@@ -83,7 +96,7 @@ class SimpleSwitch13(app_manager.RyuApp):
         dst = pkt_ethernet.dst
         src = pkt_ethernet.src
 
-        dpid = format(datapath.id, "d").zfill(16)
+        dpid = datapath.id
         self.mac_to_port.setdefault(dpid, {})
         
         self.logger.info("packet in %s %s %s %s", dpid, src, dst, in_port)
@@ -120,15 +133,15 @@ class SimpleSwitch13(app_manager.RyuApp):
 
             if pkt_icmp:
                 # handle icmp
-                self._handle_icmp(datapath, pkt_ethernet, pkt_icmp, pkt)
+                self._handle_icmp(dpid, datapath, pkt_ethernet, pkt_icmp, pkt)
                 return
             elif pkt_udp:
                 # handle udp
-                self._handle_udp(datapath, pkt_ethernet, pkt_udp, pkt)
+                self._handle_udp(dpid, datapath, pkt_ethernet, pkt_udp, pkt)
                 return
             elif pkt_tcp:
                 # handle tcp
-                self._handle_tcp(datapath, in_port, pkt_ethernet, pkt_ipv4, pkt_tcp, pkt)
+                self._handle_tcp(dpid, datapath, in_port, pkt_ethernet, pkt_ipv4, pkt_tcp, pkt)
                 return
     
     def _handle_arp(self, datapath, port, pkt_ethernet, pkt_arp):
@@ -145,14 +158,20 @@ class SimpleSwitch13(app_manager.RyuApp):
                                  dst_ip=pkt_arp.src_ip))
         self._send_packet(datapath, port, pkt)
 
-    def _handle_icmp(self, datapath, pkt_ethernet, pkt_icmp, pkt):
+    def _get_out_port(self, dpid, src, dst, clockwise):
+        if self.to_host[dst] == dpid:
+            return 1
+        port = 2 if clockwise else 3
+        return self.links[src].get(dst, port)
+
+    def _handle_icmp(self, dpid, datapath, pkt_ethernet, pkt_icmp, pkt):
         # clockwise if two shortest path
         # port 2 is clockwise, port 3 is counter-clockwise
         if pkt_icmp.type != icmp.ICMP_ECHO_REQUEST:
             return
         src = pkt_ethernet.src
         dst = pkt_ethernet.dst
-        out_port = self.links[src].get(dst, 2)
+        out_port = self._get_out_port(dpid, src, dst, True)
         parser = datapath.ofproto_parser
         match = parser.OFPMatch(eth_type=0x0800,
                                 ip_proto=1,
@@ -161,7 +180,7 @@ class SimpleSwitch13(app_manager.RyuApp):
         self.add_flow(datapath, 1, match, actions)
         self._send_packet(datapath, out_port, pkt)
 
-    def _handle_tcp(self, datapath, port, pkt_ethernet, pkt_ipv4, pkt_tcp, pkt):
+    def _handle_tcp(self, dpid, datapath, port, pkt_ethernet, pkt_ipv4, pkt_tcp, pkt):
         # clockwise if two shortest path
         # port 2 is clockwise, port 3 is counter-clockwise
         src = pkt_ethernet.src
@@ -193,7 +212,7 @@ class SimpleSwitch13(app_manager.RyuApp):
             self.add_flow(datapath, 100, match, actions)
             return
         # normal case
-        out_port = self.links[src].get(dst, 2)
+        out_port = self._get_out_port(dpid, src, dst, True)
         match = parser.OFPMatch(eth_type=0x0800,
                                 ip_proto=6,
                                 eth_src=src,
@@ -203,7 +222,7 @@ class SimpleSwitch13(app_manager.RyuApp):
         self.add_flow(datapath, 1, match, actions)
         self.send_packet(datapath, out_port, pkt)
 
-    def _handle_udp(self, datapath, pkt_ethernet, pkt_udp, pkt):
+    def _handle_udp(self, dpid, datapath, pkt_ethernet, pkt_udp, pkt):
         # counter-clockwise
         # port 2 is clockwise, port 3 is counter-clockwise
         src = pkt_ethernet.src
@@ -221,7 +240,7 @@ class SimpleSwitch13(app_manager.RyuApp):
             self.add_flow(datapath, 100, match, actions)
             return
         # normal case
-        out_port = self.links[src].get(dst, 3)
+        out_port = self._get_out_port(dpid, src, dst, False)
         match = parser.OFPMatch(eth_type=0x0800,
                                 ip_proto=17,
                                 eth_src=src,

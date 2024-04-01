@@ -14,11 +14,19 @@ class SimpleSwitch13(app_manager.RyuApp):
         super(SimpleSwitch13, self).__init__(*args, **kwargs)
         self.mac_to_port = {}
         self.ip_to_mac = {
-            '10.0.0.1': '00:00:00:00:00:01',
-            '10.0.0.2': '00:00:00:00:00:02',
-            '10.0.0.3': '00:00:00:00:00:03',
-            '10.0.0.4': '00:00:00:00:00:04'
+            '10.0.0.1': '10:00:00:00:00:01',
+            '10.0.0.2': '10:00:00:00:00:02',
+            '10.0.0.3': '10:00:00:00:00:03',
+            '10.0.0.4': '10:00:00:00:00:04'
         }
+        self.one_hop_neigbors = {
+            '10:00:00:00:00:01':['10:00:00:00:00:02','10:00:00:00:00:04'],
+            '10:00:00:00:00:02':['10:00:00:00:00:03','10:00:00:00:00:01'],
+            '10:00:00:00:00:03':['10:00:00:00:00:04','10:00:00:00:00:02'],
+            '10:00:00:00:00:04':['10:00:00:00:00:01','10:00:00:00:00:03']
+        }
+        self.tcp_blacklist = ['10:00:00:00:00:02','10:00:00:00:00:04']
+        self.udp_blacklist = ['10:00:00:00:00:01','10:00:00:00:00:04']
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
@@ -76,7 +84,24 @@ class SimpleSwitch13(app_manager.RyuApp):
 
         dpid = format(datapath.id, "d").zfill(16)
         self.mac_to_port.setdefault(dpid, {})
-
+       
+        #rst for H2, H4. Needs to move after pkt_tcp is obtained (only filters HTTP)
+        if(src in self.tcp_blacklist):
+            if(pkt_tcp.dst_port == 80):
+                p=packet.Packet()
+                p.add_protocol(ethernet.ethernet(ethertype=eth.ethertype,src=dst, dst=src))
+                p.add_protocol(ipv4.ipv4(src=pkt_ipv4.dst, dst=pkt_ipv4.src, proto=6))
+                p.add_protocol(tcp.tcp(src_port = pkt_tcp.dst_port, dst_port = pkt_tcp.src_port, ack=pkt_tcp.seq+1, bits=0b010100))
+                self._send_packet(datapath, in_port, p)
+                print("TCP RST sent")
+        
+        if(dst in self.one_hop_neighbors[src]):
+            #Handle one hop
+            out_port = (self.one_hop_neighbors[src].index(dst))+2
+        else:
+            #Handle two hop
+            pass
+            
         self.logger.info("packet in %s %s %s %s", dpid, src, dst, in_port)
 
         # learn a mac address to avoid FLOOD next time.

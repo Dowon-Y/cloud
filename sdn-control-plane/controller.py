@@ -124,15 +124,15 @@ class SimpleSwitch13(app_manager.RyuApp):
                 return
             elif pkt_udp:
                 # handle udp
-                self._handle_udp(datapath, in_port, )
-                if(src in self.udp_blacklist):
-                  match = parser.OFPMatch(eth_src=src, ip_proto=17)
-                  actions = []
-                  self.add_flow(datapath, 2, match, actions)
+                # self._handle_udp(datapath, in_port, )
+                # if(src in self.udp_blacklist):
+                #   match = parser.OFPMatch(eth_src=src, ip_proto=17)
+                #   actions = []
+                #   self.add_flow(datapath, 2, match, actions)
                   return
             elif pkt_tcp:
                 # handle tcp
-                self._handle_tcp(datapath, in_port, pkt_ethernet, pkt_ipv4, pkt_tcp)
+                self._handle_tcp(datapath, in_port, pkt_ethernet, pkt_ipv4, pkt_tcp, pkt)
                 return
     
     def _handle_arp(self, datapath, port, pkt_ethernet, pkt_arp):
@@ -165,28 +165,48 @@ class SimpleSwitch13(app_manager.RyuApp):
         self.add_flow(datapath, 1, match, actions)
         self._send_packet(datapath, port, pkt)
 
-    def _handle_tcp(self, datapath, port, pkt_ethernet, pkt_ipv4, pkt_tcp):
+    def _handle_tcp(self, datapath, port, pkt_ethernet, pkt_ipv4, pkt_tcp, pkt):
         # clockwise if two shortest path
         # port 2 is clockwise, port 3 is counter-clockwise
         src = pkt_ethernet.src
         dst = pkt_ethernet.dst
-        pass
-    #     if(src in self.tcp_blacklist):
-    #         if(pkt_tcp.dst_port == 80):
-    #             p=packet.Packet()
-    #             p.add_protocol(ethernet.ethernet(ethertype=eth.ethertype,src=dst, dst=src))
-    #             p.add_protocol(ipv4.ipv4(src=pkt_ipv4.dst, dst=pkt_ipv4.src, proto=6))
-    #             p.add_protocol(tcp.tcp(src_port = pkt_tcp.dst_port, dst_port = pkt_tcp.src_port, ack=pkt_tcp.seq+1, bits=0b010100))
-    #             self._send_packet(datapath, in_port, p)
-    #             print("TCP RST sent")
-    #             return
-    #         else:
-    #             if(dst in self.one_hop_neighbors[src]):
-    #                 #Handle one hop
-    #                 out_port = self.links[src].get(dst, 2)
-    #             else:
-    #                 #Handle two hop
-    #                 pass
+        parser = datapath.ofproto_parser
+        ofproto = datapath.ofproto
+        # blocking rule - HTTP from H2 or H4
+        if src in self.tcp_blacklist and pkt_tcp.dst_port == 80:
+            pkt_rst = packet.Packet()
+            pkt_rst.add_protocol(ethernet.ethernet(ethertype=pkt_ethernet.ethertype,
+                                               src=dst, 
+                                               dst=src))
+            pkt_rst.add_protocol(ipv4.ipv4(src=pkt_ipv4.dst,
+                                       dst=pkt_ipv4.src,
+                                       proto=6))
+            pkt_rst.add_protocol(tcp.tcp(src_port = pkt_tcp.dst_port, 
+                                     dst_port = pkt_tcp.src_port, 
+                                     ack=pkt_tcp.seq+1, 
+                                     bits=0b010100))
+            self._send_packet(datapath, port, pkt_rst)
+            self.logger.info("TCP RST sent")
+            # blocking rule should have higher priority
+            match = parser.OFPMatch(eth_type=0x0800,
+                                    ip_proto=6,
+                                    eth_src=src,
+                                    tcp_dst=pkt_tcp.dst_port)
+            actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
+                                              ofproto.OFPCML_NO_BUFFER)]
+            self.add_flow(datapath, 100, match, actions)
+            return
+        # normal case
+        out_port = self.links[src].get(dst, 2)
+        match = parser.OFPMatch(eth_type=0x0800,
+                                ip_proto=6,
+                                eth_src=src,
+                                eth_dst=dst,
+                                tcp_dst=pkt_tcp.dst_port)
+        actions = [parser.OFPActionOutput(port=out_port)]
+        self.add_flow(datapath, 1, match, actions)
+        self.send_packet(datapath, out_port, pkt)
+
 
     def _send_packet(self, datapath, port, pkt):
         ofproto = datapath.ofproto

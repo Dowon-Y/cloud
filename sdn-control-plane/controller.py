@@ -26,6 +26,8 @@ class SimpleSwitch13(app_manager.RyuApp):
             '00:00:00:00:00:03' : { '10:00:00:00:00:04' : 2, '10:00:00:00:00:02' : 3},
             '00:00:00:00:00:04' : { '10:00:00:00:00:01' : 2, '10:00:00:00:00:03' : 3},
         }
+        self.tcp_blacklist = { '10:00:00:00:00:02', '10:00:00:00:00:04' }
+        self.udp_blacklist = { '10:00:00:00:00:01', '10:00:00:00:00:04' }
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
@@ -115,13 +117,14 @@ class SimpleSwitch13(app_manager.RyuApp):
 
             if pkt_icmp:
                 # handle icmp
-                self._handle_arp(datapath, )
+                self._handle_icmp(datapath, in_port, pkt_ethernet, pkt_icmp, pkt)
                 return
             elif pkt_udp:
                 # handle udp
                 return
             elif pkt_tcp:
                 # handle tcp
+                self._handle_tcp(datapath, in_port, pkt_ethernet, pkt_ipv4, pkt_tcp)
                 return
     
     def _handle_arp(self, datapath, port, pkt_ethernet, pkt_arp):
@@ -138,7 +141,7 @@ class SimpleSwitch13(app_manager.RyuApp):
                                  dst_ip=pkt_arp.src_ip))
         self._send_packet(datapath, port, pkt)
 
-    def _handle_icmp(self, datapath, port, pkt_ethernet, pkt_ipv4, pkt_icmp):
+    def _handle_icmp(self, datapath, port, pkt_ethernet, pkt_icmp, pkt):
         # clockwise if two shortest path
         # port 2 is clockwise, port 3 is counter-clockwise
         if pkt_icmp.type != icmp.ICMP_ECHO_REQUEST:
@@ -152,18 +155,32 @@ class SimpleSwitch13(app_manager.RyuApp):
                                 eth_dst=dst)
         actions = [parser.OFPActionOutput(port=out_port)]
         self.add_flow(datapath, 1, match, actions)
-        pkt = packet.Packet()
-        pkt.add_protocol(ethernet.ethernet(ethertype=pkt_ethernet.ethertype,
-                                           dst=pkt_ethernet.src,
-                                           src=pkt_ethernet.dst))
-        pkt.add_protocol(ipv4.ipv4(dst=pkt_ipv4.src,
-                                   src=self.ip_addr,
-                                   proto=pkt_ipv4.proto))
-        pkt.add_protocol(icmp.icmp(type_=icmp.ICMP_ECHO_REPLY,
-                                   code=icmp.ICMP_ECHO_REPLY_CODE,
-                                   csum=0,
-                                   data=pkt_icmp.data))
         self._send_packet(datapath, port, pkt)
+
+    def _handle_tcp(self, datapath, port, pkt_ethernet, pkt_ipv4, pkt_tcp):
+        # clockwise if two shortest path
+        # port 2 is clockwise, port 3 is counter-clockwise
+        src = pkt_ethernet.src
+        dst = pkt_ethernet.dst
+        # 
+        if(src in self.tcp_blacklist):
+            if(pkt_tcp.dst_port == 80):
+                p=packet.Packet()
+                p.add_protocol(ethernet.ethernet(ethertype=eth.ethertype,src=dst, dst=src))
+                p.add_protocol(ipv4.ipv4(src=pkt_ipv4.dst, dst=pkt_ipv4.src, proto=6))
+                p.add_protocol(tcp.tcp(src_port = pkt_tcp.dst_port, dst_port = pkt_tcp.src_port, ack=pkt_tcp.seq+1, bits=0b010100))
+                self._send_packet(datapath, in_port, p)
+                print("TCP RST sent")
+
+
+        out_port = self.links[src].get(dst, 2)
+        parser = datapath.ofproto_parser
+        match = parser.OFPMatch(eth_type=0x0800,
+                                ip_proto=1,
+                                eth_dst=dst)
+        actions = [parser.OFPActionOutput(port=out_port)]
+        self.add_flow(datapath, 1, match, actions)
+
 
     def _send_packet(self, datapath, port, pkt):
         ofproto = datapath.ofproto
